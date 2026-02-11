@@ -265,6 +265,7 @@ function renderGameWelcomeHtml({ slug, title, desc }) {
 }
 
 function renderIndexHtml(games) {
+  const count = games.length;
   const items =
     games.length === 0
       ? `<p class="muted">目前還沒有遊戲。請在 <code>&lt;game-slug&gt;/index.html</code> 新增一個（放在 repo 根目錄下的一個資料夾）。</p>`
@@ -290,8 +291,8 @@ ${games
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GoGameAI - 小遊戲</title>
-    <meta name="description" content="AI 製作的網頁小遊戲合集（GitHub Pages）" />
+    <title>GoGameAI - 歡迎</title>
+    <meta name="description" content="歡迎來到 GoGameAI：AI 製作的網頁小遊戲合集（GitHub Pages）。" />
     <style>
       :root {
         color-scheme: light dark;
@@ -300,7 +301,9 @@ ${games
         --border: rgba(255, 255, 255, 0.12);
         --text: rgba(255, 255, 255, 0.92);
         --muted: rgba(255, 255, 255, 0.66);
-        --accent: #7c3aed;
+        --accent: #22d3ee;
+        --accent2: #22c55e;
+        --accent3: #facc15;
       }
       @media (prefers-color-scheme: light) {
         :root {
@@ -309,7 +312,9 @@ ${games
           --border: rgba(10, 10, 25, 0.10);
           --text: rgba(10, 10, 25, 0.92);
           --muted: rgba(10, 10, 25, 0.62);
-          --accent: #6d28d9;
+          --accent: #0891b2;
+          --accent2: #16a34a;
+          --accent3: #ca8a04;
         }
       }
       html,
@@ -322,13 +327,18 @@ ${games
           Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
         background: radial-gradient(
             1200px 800px at 20% 10%,
-            rgba(124, 58, 237, 0.22),
+            rgba(34, 211, 238, 0.18),
             transparent 55%
           ),
           radial-gradient(
             1000px 700px at 90% 20%,
-            rgba(14, 165, 233, 0.18),
+            rgba(34, 197, 94, 0.14),
             transparent 50%
+          ),
+          radial-gradient(
+            900px 650px at 70% 85%,
+            rgba(250, 204, 21, 0.10),
+            transparent 55%
           ),
           var(--bg);
         color: var(--text);
@@ -338,22 +348,77 @@ ${games
         margin: 0 auto;
         padding: 40px 18px 72px;
       }
-      header {
-        display: flex;
-        gap: 14px;
-        align-items: baseline;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        margin-bottom: 22px;
-      }
       h1 {
         margin: 0;
-        font-size: 26px;
+        font-size: 28px;
         letter-spacing: 0.2px;
       }
       .hint {
         color: var(--muted);
         font-size: 14px;
+      }
+      .hero {
+        border: 1px solid var(--border);
+        background: linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--accent) 18%, transparent),
+          color-mix(in srgb, var(--accent2) 14%, transparent),
+          color-mix(in srgb, var(--accent3) 10%, transparent)
+        );
+        border-radius: 16px;
+        padding: 18px;
+        overflow: hidden;
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.18);
+      }
+      .heroTop {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .heroSub {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .heroActions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+      }
+      .btn {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--panel) 78%, transparent);
+        color: var(--text);
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-weight: 800;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .btnPrimary {
+        border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+        background: linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--accent) 28%, transparent),
+          color-mix(in srgb, var(--accent2) 20%, transparent),
+          color-mix(in srgb, var(--accent3) 14%, transparent)
+        );
+        box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06) inset;
+      }
+      .btn:hover {
+        border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+      }
+      .sectionTitle {
+        margin: 18px 0 10px;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+        color: var(--muted);
       }
       .grid {
         list-style: none;
@@ -408,10 +473,21 @@ ${games
   </head>
   <body>
     <div class="wrap">
-      <header>
-        <h1>GoGameAI 小遊戲</h1>
-        <div class="hint">每個遊戲在 <code>&lt;game-slug&gt;/</code></div>
-      </header>
+      <div class="hero">
+        <div class="heroTop">
+          <h1>歡迎來到 GoGameAI</h1>
+          <div class="heroActions">
+            <a class="btn btnPrimary" href="#games">開始挑一個遊戲</a>
+            ${count > 0 ? `<a class="btn" href="./${encodeURIComponent(games[0].slug)}/play/">隨機先玩一下</a>` : ""}
+          </div>
+        </div>
+        <div class="heroSub">
+          這裡收錄我用 AI 製作的網頁小遊戲（GitHub Pages）。每個遊戲都有自己的入口頁與「直接開始」連結。<br />
+          目前共有 <b>${count}</b> 個小遊戲。
+        </div>
+      </div>
+
+      <div class="sectionTitle" id="games">小遊戲列表（點選超連結進入）</div>
 
       ${items}
 
