@@ -1,0 +1,10 @@
+{
+  "name": "gogameai-pages",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:pages": "node scripts/build-pages.mjs"
+  }
+}
+
+
