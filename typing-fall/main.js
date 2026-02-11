@@ -1,11 +1,12 @@
 (() => {
-  /** @typedef {{ id: number, kind: "normal" | "weapon", weaponType?: "bomb" | "arrow", text: string, zyLen?: 1|2|3, x: number, y: number, speed: number, el: HTMLElement }} FallingWord */
+  /** @typedef {{ id: number, kind: "normal" | "weapon", weaponType?: "bomb" | "arrow", text: string, zyLen?: 1|2|3, x: number, y: number, speed: number, el: HTMLElement, pending?: boolean }} FallingWord */
 
   const $ = (id) => document.getElementById(id);
   const playfield = $("playfield");
   const gameRoot = $("game");
 
   const elScore = $("score");
+  const elTotalScore = $("totalScore");
   const elCombo = $("combo");
   const elAmmo = $("ammo");
   const elLevel = $("level");
@@ -29,6 +30,8 @@
   const difficultySel = $("difficulty");
   const wordsetSel = $("wordset");
   const elBestTimes = $("bestTimes");
+  const elSfxEnabled = $("sfxEnabled");
+  const elSfxVolume = $("sfxVolume");
 
   const WEAPON_BOMB_CHAR = "爆";
   const WEAPON_ARROW_CHAR = "箭";
@@ -57,6 +60,7 @@
     lastSpawnT: 0,
 
     score: 0, // 本關分數（每關重置）
+    totalScore: 0, // 總分（跨關累積）
     combo: 0,
     hits: 0, // total hits
     submitStreak: 0, // 連續「送出有命中」次數（送出沒命中就算出錯 -> 歸零）
@@ -69,9 +73,191 @@
     stageMistakes: 0, // 本關失誤次數（送出未命中、漏字扣分都算）
     stageCleared: false,
     stageAdvanceTimer: 0,
+    lastHudSecond: null, // 用來讓倒數時間每秒更新一次
   };
 
   const STORAGE_KEY = "typing-fall:bestTimes:v1";
+
+  const sfx = (() => {
+    /** @type {AudioContext | null} */
+    let ctx = null;
+    /** @type {GainNode | null} */
+    let master = null;
+    let enabled = true;
+    let volume = 0.4;
+
+    function clamp01(v) {
+      return Math.max(0, Math.min(1, v));
+    }
+
+    function ensure() {
+      if (!enabled) return null;
+      if (ctx) return ctx;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = volume;
+      master.connect(ctx.destination);
+      return ctx;
+    }
+
+    function setEnabled(v) {
+      enabled = !!v;
+    }
+
+    function setVolume01(v) {
+      volume = clamp01(v);
+      if (master) master.gain.value = volume;
+    }
+
+    function nowT() {
+      return ctx ? ctx.currentTime : 0;
+    }
+
+    function tone({ type = "sine", freq = 440, dur = 0.08, gain = 0.12, detune = 0 }) {
+      const c = ensure();
+      if (!c || !master) return;
+      if (c.state === "suspended") c.resume().catch(() => {});
+
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = type;
+      o.frequency.value = freq;
+      o.detune.value = detune;
+
+      const t0 = nowT();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+      o.connect(g);
+      g.connect(master);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    }
+
+    function sweep({ f0, f1, dur = 0.14, gain = 0.12, type = "sine" }) {
+      const c = ensure();
+      if (!c || !master) return;
+      if (c.state === "suspended") c.resume().catch(() => {});
+
+      const o = c.createOscillator();
+      const g = c.createGain();
+      o.type = type;
+      const t0 = nowT();
+      o.frequency.setValueAtTime(f0, t0);
+      o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(master);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    }
+
+    function noise({ dur = 0.10, gain = 0.10, tone = 800 }) {
+      const c = ensure();
+      if (!c || !master) return;
+      if (c.state === "suspended") c.resume().catch(() => {});
+
+      const bufferSize = Math.max(1, Math.floor(c.sampleRate * dur));
+      const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+
+      const src = c.createBufferSource();
+      src.buffer = buffer;
+
+      const bp = c.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = tone;
+      bp.Q.value = 1.2;
+
+      const g = c.createGain();
+      const t0 = nowT();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(master);
+      src.start(t0);
+      src.stop(t0 + dur + 0.02);
+    }
+
+    function hit(pts) {
+      if (pts === 5) {
+        tone({ type: "triangle", freq: 880, dur: 0.08, gain: 0.13 });
+        tone({ type: "sine", freq: 1320, dur: 0.06, gain: 0.07, detune: 6 });
+      } else if (pts === 3) {
+        tone({ type: "triangle", freq: 660, dur: 0.07, gain: 0.11 });
+      } else {
+        tone({ type: "sine", freq: 440, dur: 0.06, gain: 0.10 });
+      }
+    }
+
+    function missile(pts) {
+      // whoosh sweep
+      if (pts === 5) sweep({ f0: 280, f1: 1200, dur: 0.12, gain: 0.10, type: "sawtooth" });
+      else if (pts === 3) sweep({ f0: 220, f1: 900, dur: 0.14, gain: 0.09, type: "sawtooth" });
+      else sweep({ f0: 180, f1: 700, dur: 0.16, gain: 0.08, type: "sawtooth" });
+    }
+
+    function boom(pts) {
+      // explosion noise + low thump
+      if (pts === 5) {
+        noise({ dur: 0.12, gain: 0.14, tone: 900 });
+        tone({ type: "sine", freq: 90, dur: 0.10, gain: 0.12 });
+      } else if (pts === 3) {
+        noise({ dur: 0.10, gain: 0.11, tone: 800 });
+        tone({ type: "sine", freq: 110, dur: 0.08, gain: 0.10 });
+      } else {
+        noise({ dur: 0.08, gain: 0.09, tone: 700 });
+        tone({ type: "sine", freq: 130, dur: 0.06, gain: 0.09 });
+      }
+    }
+
+    function wrong() {
+      sweep({ f0: 220, f1: 70, dur: 0.18, gain: 0.10, type: "square" });
+    }
+
+    function drop() {
+      tone({ type: "sine", freq: 120, dur: 0.10, gain: 0.11 });
+      noise({ dur: 0.06, gain: 0.07, tone: 260 });
+    }
+
+    function clear(perfect) {
+      if (perfect) {
+        tone({ type: "triangle", freq: 988, dur: 0.12, gain: 0.10 });
+        tone({ type: "triangle", freq: 1318, dur: 0.12, gain: 0.08, detune: -4 });
+        tone({ type: "sine", freq: 1760, dur: 0.10, gain: 0.06 });
+      } else {
+        tone({ type: "triangle", freq: 784, dur: 0.10, gain: 0.09 });
+        tone({ type: "sine", freq: 1046, dur: 0.10, gain: 0.07 });
+      }
+    }
+
+    function ammoUp() {
+      tone({ type: "sine", freq: 660, dur: 0.06, gain: 0.08 });
+      tone({ type: "sine", freq: 990, dur: 0.06, gain: 0.06, detune: 5 });
+    }
+
+    return {
+      setEnabled,
+      setVolume01,
+      hit,
+      missile,
+      boom,
+      wrong,
+      drop,
+      clear,
+      ammoUp,
+      ensure,
+    };
+  })();
 
   function now() {
     return performance.now();
@@ -223,6 +409,7 @@
 
   function updateHud() {
     elScore.textContent = String(state.score);
+    if (elTotalScore) elTotalScore.textContent = String(state.totalScore);
     elCombo.textContent = String(state.combo);
     elAmmo.textContent = String(state.ammo);
     elLevel.textContent = String(state.level);
@@ -300,6 +487,68 @@
     }
   }
 
+  function burstParticles(clientX, clientY, kind, count) {
+    const pf = playfield.getBoundingClientRect();
+    const x = clientX - pf.left;
+    const y = clientY - pf.top;
+
+    const color =
+      kind === "good"
+        ? "rgba(34, 197, 94, 0.95)"
+        : kind === "bad"
+          ? "rgba(239, 68, 68, 0.95)"
+          : "rgba(96, 165, 250, 0.95)";
+
+    const n = Math.max(1, count | 0);
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement("div");
+      p.className = "particle";
+      p.style.left = `${x}px`;
+      p.style.top = `${y}px`;
+      p.style.background = color;
+
+      const a = Math.random() * Math.PI * 2;
+      const r = 18 + Math.random() * 54;
+      const dx = Math.cos(a) * r;
+      const dy = Math.sin(a) * r - 10;
+      p.style.setProperty("--dx", `${dx}px`);
+      p.style.setProperty("--dy", `${dy}px`);
+
+      playfield.appendChild(p);
+      p.addEventListener("animationend", () => p.remove(), { once: true });
+    }
+  }
+
+  function blastAt(clientX, clientY, pts) {
+    // 依分數套不同爆炸：1(小) / 3(中) / 5(大)
+    const cls = pts === 5 ? "t5" : pts === 3 ? "t3" : "t1";
+    const kind = pts === 5 ? "good" : pts === 3 ? "info" : "bad";
+    const bursts = pts === 5 ? 3 : pts === 3 ? 2 : 1;
+    const particlesPerBurst = pts === 5 ? 26 : pts === 3 ? 18 : 12;
+
+    // ring
+    const pf = playfield.getBoundingClientRect();
+    const x = clientX - pf.left;
+    const y = clientY - pf.top;
+    const ring = document.createElement("div");
+    ring.className = `blastRing ${cls}`;
+    ring.style.left = `${x}px`;
+    ring.style.top = `${y}px`;
+    playfield.appendChild(ring);
+    ring.addEventListener("animationend", () => ring.remove(), { once: true });
+
+    for (let b = 0; b < bursts; b++) {
+      window.setTimeout(() => {
+        burstParticles(
+          clientX + (Math.random() * 12 - 6),
+          clientY + (Math.random() * 10 - 5),
+          kind,
+          particlesPerBurst
+        );
+      }, b * (pts === 5 ? 70 : 85));
+    }
+  }
+
   function celebratePerfectStage() {
     // 簡易煙火：多個 burst 疊加，搭配浮字
     const pf = playfield.getBoundingClientRect();
@@ -360,6 +609,7 @@
     clearWords();
 
     state.score = 0;
+    state.totalScore = 0;
     state.combo = 0;
     state.hits = 0;
     state.submitStreak = 0;
@@ -371,6 +621,7 @@
     state.stageTimeLeftMs = state.stageDurationMs;
     state.stageMistakes = 0;
     state.stageCleared = false;
+    state.lastHudSecond = null;
     updateHud();
     setStatus("準備開始");
 
@@ -439,10 +690,12 @@
     const penalty = params.dropPenalty * count;
     state.stageMistakes += 1;
     state.score = Math.max(0, state.score - penalty);
+    state.totalScore = Math.max(0, state.totalScore - penalty);
     state.combo = 0;
     state.submitStreak = 0;
     updateHud();
     flashBad();
+    sfx.drop();
     setStatus(`漏字 -${penalty}`);
   }
 
@@ -454,7 +707,7 @@
     setStatus("遊戲結束");
     showOverlay(
       "遊戲結束",
-      `${reason}。本關分數 ${state.score}/${state.stageTargetScore}。按「重來」再挑戰一次。`
+      `${reason}。本關分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
     );
     setOverlayPrimary("開始遊戲");
   }
@@ -467,7 +720,7 @@
     setStatus("時間到");
     showOverlay(
       "時間到",
-      `未達標：本關分數 ${state.score}/${state.stageTargetScore}。按「重來」再挑戰一次。`
+      `未達標：本關分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
     );
     setOverlayPrimary("開始遊戲");
   }
@@ -492,10 +745,11 @@
 
     const perfect = state.stageMistakes === 0;
     if (perfect) celebratePerfectStage();
+    sfx.clear(perfect);
 
     hideOverlay();
     showBanner(
-      `第 ${state.level} 關完成！${perfect ? " Perfect!" : ""}${isNew ? " 新紀錄！" : ""}`,
+      `第 ${state.level} 關完成！${perfect ? " Perfect!" : ""}${isNew ? " 新紀錄！" : ""}（總分 ${state.totalScore}）`,
       perfect ? "good" : "info"
     );
 
@@ -516,6 +770,7 @@
     state.stageDurationMs = 180000;
     state.stageTimeLeftMs = state.stageDurationMs;
     state.stageCleared = false;
+    state.lastHudSecond = null;
     clearWords();
     updateHud();
 
@@ -598,6 +853,7 @@
 
     let best = null;
     for (const w of state.words) {
+      if (w.pending) continue;
       if (w.text === t) {
         if (!best || w.y > best.y) best = w;
       }
@@ -605,10 +861,9 @@
     if (!best) return { ok: false, msg: "沒有命中" };
 
     const hitRect = best.el.getBoundingClientRect();
-    popParticles(hitRect.left + hitRect.width / 2, hitRect.top + hitRect.height / 2, "good");
-
-    // remove (hit)
-    removeWord(best);
+    // 用導彈命中特效取代「瞬間消失」
+    best.pending = true;
+    best.el.classList.add("pending");
 
     // score (依命中高度分三段)
     state.hits += 1;
@@ -619,10 +874,28 @@
     const centerY = best.y + 26; // word box ~52px
     const { pts, tier } = tierPointsByHeight(centerY, pfRect.height);
     state.score += pts;
+    state.totalScore += pts;
     updateHud();
     flashGood();
+    sfx.hit(pts);
     setStatus(`命中（${tier}）+${pts}`);
     popFloatText(hitRect.left + hitRect.width / 2, hitRect.top, `+${pts}`, "good");
+
+    // 導彈飛過去命中（依 5/3/1 用不同導彈/爆炸）
+    launchMissileToPoint(
+      hitRect.left + hitRect.width / 2,
+      hitRect.top + hitRect.height / 2,
+      pts,
+      () => {
+      blastAt(hitRect.left + hitRect.width / 2, hitRect.top + hitRect.height / 2, pts);
+      sfx.boom(pts);
+      const still = state.words.find((w) => w.id === best.id);
+      if (still) {
+        removeWord(still);
+        highlightMatches(input.value.trim());
+      }
+      }
+    );
 
     // 武器字效果
     if (best.kind === "weapon") {
@@ -643,20 +916,13 @@
       }
     }
 
-    // 連續「送出命中」里程碑：命中+次數（不額外爆分）
-    if (state.submitStreak === 5 || state.submitStreak === 10 || state.submitStreak === 20) {
-      popFloatText(
-        hitRect.left + hitRect.width / 2,
-        hitRect.top + hitRect.height / 2,
-        `命中 +${state.submitStreak}`,
-        "info"
-      );
-    }
+    // 移除任何看似「額外加分」的提示，避免混淆（保留 combo 數字即可）
 
     // 每命中 10 次 -> +1 炮彈
     if (state.hitsSinceAmmo % 10 === 0) {
       state.ammo += 1;
       updateHud();
+      sfx.ammoUp();
       popFloatText(hitRect.left + hitRect.width / 2, hitRect.top - 20, "炮彈 +1", "info");
     }
 
@@ -685,6 +951,12 @@
       requestAnimationFrame(tick);
       return;
     }
+    // 讓倒數時間（與分數條）至少每秒刷新一次
+    const secLeft = Math.ceil(state.stageTimeLeftMs / 1000);
+    if (state.lastHudSecond !== secLeft) {
+      state.lastHudSecond = secLeft;
+      updateHud();
+    }
 
     // spawn pacing
     const params = difficultyParams();
@@ -698,6 +970,7 @@
     const bottomY = rect.height + 8;
 
     for (const w of state.words) {
+      if (w.pending) continue;
       w.y += w.speed * dt;
       w.el.style.top = `${w.y}px`;
     }
@@ -773,6 +1046,7 @@
       state.combo = 0;
       state.submitStreak = 0;
       state.score = Math.max(0, state.score - params.wrongPenalty);
+      state.totalScore = Math.max(0, state.totalScore - params.wrongPenalty);
       updateHud();
       setStatus(`${r.msg} -${params.wrongPenalty}`);
 
@@ -866,6 +1140,68 @@
     );
   }
 
+  function launchMissileToPoint(clientX, clientY, pts, onHit) {
+    const pf = playfield.getBoundingClientRect();
+    const tx = clientX - pf.left;
+    const ty = clientY - pf.top;
+    const sx = pf.width / 2;
+    const sy = pf.height + 24;
+
+    const m = document.createElement("div");
+    const cls = pts === 5 ? "t5" : pts === 3 ? "t3" : "t1";
+    m.className = `missile ${cls}`;
+    playfield.appendChild(m);
+
+    const duration = pts === 5 ? 260 : pts === 3 ? 310 : 360;
+    sfx.missile(pts);
+    const angle = Math.atan2(ty - sy, tx - sx);
+    const rot = `${(angle * 180) / Math.PI}deg`;
+
+    const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+    const startedAt = performance.now();
+    let raf = 0;
+    let lastTrailAt = 0;
+
+    const tickTrail = (t) => {
+      const p = Math.max(0, Math.min(1, (t - startedAt) / duration));
+      const e = easeOut(p);
+      const x = sx + (tx - sx) * e;
+      const y = sy + (ty - sy) * e;
+
+      if (t - lastTrailAt > 30) {
+        lastTrailAt = t;
+        const dot = document.createElement("div");
+        dot.className = `trailDot ${cls}`;
+        dot.style.left = `${x}px`;
+        dot.style.top = `${y}px`;
+        playfield.appendChild(dot);
+        dot.addEventListener("animationend", () => dot.remove(), { once: true });
+      }
+
+      if (p < 1) raf = requestAnimationFrame(tickTrail);
+    };
+    raf = requestAnimationFrame(tickTrail);
+
+    const anim = m.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot})`, opacity: 0.0 },
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot})`, opacity: 1.0, offset: 0.08 },
+        { transform: `translate(${tx}px, ${ty}px) rotate(${rot})`, opacity: 1.0 },
+      ],
+      { duration, easing: "cubic-bezier(0.2, 0.9, 0.2, 1)", fill: "forwards" }
+    );
+
+    anim.addEventListener(
+      "finish",
+      () => {
+        if (raf) cancelAnimationFrame(raf);
+        m.remove();
+        if (typeof onHit === "function") onHit();
+      },
+      { once: true }
+    );
+  }
+
   // 點擊落字：消耗炮彈直接炸掉
   playfield.addEventListener("pointerdown", (e) => {
     const targetEl = e.target && e.target.closest ? e.target.closest(".word") : null;
@@ -889,8 +1225,29 @@
     state.ammo -= 1;
     updateHud();
     popFloatText(clientX, clientY, "炮彈 -1", "info");
+    sfx.missile(3);
     launchMissileToWord(word);
   });
+
+  // 音效設定
+  function syncSfxSettings() {
+    const on = elSfxEnabled ? elSfxEnabled.checked : true;
+    const vol = elSfxVolume ? Number(elSfxVolume.value || 0) / 100 : 0.4;
+    sfx.setEnabled(on);
+    sfx.setVolume01(vol);
+  }
+  if (elSfxEnabled) elSfxEnabled.addEventListener("change", syncSfxSettings);
+  if (elSfxVolume) elSfxVolume.addEventListener("input", syncSfxSettings);
+  syncSfxSettings();
+
+  // 只要有互動就嘗試啟動音訊（避免自動播放限制）
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      sfx.ensure();
+    },
+    { once: true }
+  );
 })();
 
 

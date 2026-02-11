@@ -24,6 +24,7 @@
           <div class="hud">
             <div class="hudLeft">
               <div class="pill">分數 <b id="score">0</b></div>
+              <div class="pill">總分 <b id="totalScore">0</b></div>
               <div class="pill">連擊 <b id="combo">0</b></div>
               <div class="pill">炮彈 <b id="ammo">0</b></div>
               <div class="pill">關卡 <b id="level">1</b></div>
@@ -43,7 +44,19 @@
           <div class="game" id="game">
             <div class="flash" id="flash"></div>
             <div class="banner" id="banner" aria-live="polite"></div>
-            <div class="playfield" id="playfield" aria-label="落字區"></div>
+            <div class="playfield" id="playfield" aria-label="落字區">
+              <div class="tiers" aria-hidden="true">
+                <div class="tierLine at1">
+                  <span>高分區 +5</span>
+                </div>
+                <div class="tierLine at2">
+                  <span>中分區 +3</span>
+                </div>
+                <div class="tierLabel low">
+                  <span>低分區 +1</span>
+                </div>
+              </div>
+            </div>
             <div class="floor" aria-hidden="true"></div>
 
             <div class="centerOverlay" id="overlay">
@@ -100,6 +113,19 @@
                 <option value="punct">標點符號</option>
                 <option value="zhuyin">注音符號（1～3 符號）</option>
               </select>
+            </div>
+            <div class="row">
+              <label for="sfxEnabled">音效</label>
+              <div style="display: flex; gap: 10px; align-items: center">
+                <label style="display: inline-flex; gap: 8px; align-items: center">
+                  <input id="sfxEnabled" type="checkbox" checked />
+                  <span>開啟</span>
+                </label>
+                <label style="display: inline-flex; gap: 8px; align-items: center">
+                  <span class="small">音量</span>
+                  <input id="sfxVolume" type="range" min="0" max="100" value="40" />
+                </label>
+              </div>
             </div>
             <div class="small">
               小提醒：這是「打出中文字符」的練習，所以會依賴你的中文輸入法。為了避免 IME
