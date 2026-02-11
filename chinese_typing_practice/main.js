@@ -75,7 +75,9 @@
     lastHudSecond: null, // 用來讓倒數時間每秒更新一次
   };
 
-  const STORAGE_KEY = "typing-fall:bestTimes:v1";
+  // localStorage：改名後沿用舊 key 的資料（避免玩家紀錄消失）
+  const STORAGE_KEY = "chinese_typing_practice:bestTimes:v1";
+  const STORAGE_KEY_OLD = "typing-fall:bestTimes:v1";
 
   const sfx = (() => {
     /** @type {AudioContext | null} */
@@ -475,7 +477,18 @@
   function loadBestTimes() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
+      const rawOld = localStorage.getItem(STORAGE_KEY_OLD);
       const obj = raw ? JSON.parse(raw) : {};
+      const objOld = !raw && rawOld ? JSON.parse(rawOld) : null;
+      // 若新 key 沒資料但舊 key 有，就自動遷移一次
+      if (
+        (!obj || (typeof obj === "object" && Object.keys(obj).length === 0)) &&
+        objOld &&
+        typeof objOld === "object"
+      ) {
+        saveBestTimes(objOld);
+        return objOld;
+      }
       if (!obj || typeof obj !== "object") return {};
       return obj;
     } catch {
