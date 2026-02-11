@@ -4,6 +4,14 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const outDir = path.join(repoRoot, "docs");
 
+function readTextIfExists(p) {
+  try {
+    return fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+  } catch {
+    return "";
+  }
+}
+
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
@@ -57,6 +65,205 @@ function escapeHtml(s) {
     .replaceAll("'", "&#39;");
 }
 
+function extractGameMeta(slug) {
+  const indexPath = path.join(repoRoot, slug, "index.html");
+  const html = readTextIfExists(indexPath);
+  const title =
+    (html.match(/<title>\s*([^<]{1,120}?)\s*<\/title>/i)?.[1] || slug).trim();
+  const desc =
+    (
+      html.match(
+        /<meta\s+name=["']description["']\s+content=["']([^"']{1,240})["']\s*\/?>/i
+      )?.[1] || ""
+    ).trim();
+  return { title, desc };
+}
+
+function renderGameWelcomeHtml({ slug, title, desc }) {
+  const safeTitle = escapeHtml(title || slug);
+  const safeSlug = escapeHtml(slug);
+  const safeDesc = escapeHtml(desc || "點選開始即可進入遊戲。");
+  return `<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeTitle}</title>
+    <meta name="description" content="${safeDesc}" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1220;
+        --panel: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.66);
+        --accent: #22d3ee;
+        --accent2: #22c55e;
+        --accent3: #facc15;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f7f7fb;
+          --panel: rgba(10, 10, 25, 0.04);
+          --border: rgba(10, 10, 25, 0.10);
+          --text: rgba(10, 10, 25, 0.92);
+          --muted: rgba(10, 10, 25, 0.62);
+          --accent: #0891b2;
+          --accent2: #16a34a;
+          --accent3: #ca8a04;
+        }
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(
+            1200px 800px at 20% 10%,
+            rgba(34, 211, 238, 0.18),
+            transparent 55%
+          ),
+          radial-gradient(
+            1000px 700px at 90% 20%,
+            rgba(34, 197, 94, 0.14),
+            transparent 50%
+          ),
+          radial-gradient(
+            900px 650px at 70% 85%,
+            rgba(250, 204, 21, 0.10),
+            transparent 55%
+          ),
+          var(--bg);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 44px 18px 72px;
+      }
+      a {
+        color: color-mix(in srgb, var(--accent) 80%, var(--text));
+      }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: baseline;
+        margin-bottom: 18px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        letter-spacing: 0.2px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .card {
+        margin-top: 14px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 16px;
+        padding: 18px;
+        overflow: hidden;
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 720px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+      }
+      .badge {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--panel) 70%, transparent);
+        color: var(--muted);
+        font-size: 13px;
+        margin-top: 10px;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        align-items: center;
+      }
+      .btn {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--panel) 78%, transparent);
+        color: var(--text);
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-weight: 700;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .btnPrimary {
+        border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+        background: linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--accent) 28%, transparent),
+          color-mix(in srgb, var(--accent2) 20%, transparent),
+          color-mix(in srgb, var(--accent3) 14%, transparent)
+        );
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+          0 18px 40px rgba(0, 0, 0, 0.18);
+      }
+      .btn:hover {
+        border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+      }
+      .footer {
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="top">
+        <div class="sub"><a href="../">← 回遊戲列表</a></div>
+        <div class="sub">遊戲目錄：<code>${safeSlug}</code></div>
+      </div>
+      <div class="card">
+        <div class="hero">
+          <div>
+            <h1>${safeTitle}</h1>
+            <div class="sub" style="margin-top: 8px">${safeDesc}</div>
+            <div class="badge">入口頁（歡迎頁）→ 再進入遊戲本體</div>
+          </div>
+          <div class="actions">
+            <a class="btn btnPrimary" href="./play/">開始遊戲</a>
+            <a class="btn" href="./play/#skipWelcome">直接開始（略過）</a>
+          </div>
+        </div>
+        <div class="footer">
+          小提醒：如果你想把此頁當作「遊戲介紹」，可以在遊戲資料夾內加一個 <code>README.md</code>，之後我也能讓首頁自動讀取顯示。
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+`;
+}
+
 function renderIndexHtml(games) {
   const items =
     games.length === 0
@@ -68,8 +275,11 @@ ${games
     return `  <li class="card">
     <a class="cardLink" href="./${encodeURIComponent(g.slug)}/">
       <div class="cardTitle">${name}</div>
-      <div class="cardSub">開啟遊戲 →</div>
+      <div class="cardSub">入口（歡迎頁）→</div>
     </a>
+    <div style="padding: 0 14px 14px">
+      <a class="cardSub" href="./${encodeURIComponent(g.slug)}/play/">直接開始 →</a>
+    </div>
   </li>`;
   })
   .join("\n")}
@@ -220,9 +430,30 @@ function main() {
   rmDir(outDir);
   ensureDir(outDir);
 
-  // Copy each game folder -> docs/<slug>/
+  // Copy each game folder -> docs/<slug>/play/ (and generate docs/<slug>/ as welcome page)
   for (const g of games) {
-    copyDir(path.join(repoRoot, g.slug), path.join(outDir, g.slug));
+    const { title, desc } = extractGameMeta(g.slug);
+    const gameOutDir = path.join(outDir, g.slug);
+    const playOutDir = path.join(gameOutDir, "play");
+
+    copyDir(path.join(repoRoot, g.slug), playOutDir);
+
+    // Generate welcome page: docs/<slug>/index.html
+    fs.writeFileSync(
+      path.join(gameOutDir, "index.html"),
+      renderGameWelcomeHtml({ slug: g.slug, title, desc }),
+      "utf8"
+    );
+
+    // Patch the copied game's "back home" link to go to the list, not to the welcome page
+    const playIndex = path.join(playOutDir, "index.html");
+    const html = readTextIfExists(playIndex);
+    if (html) {
+      const patched = html
+        .replaceAll('href="../">← 回首頁', 'href="../../">← 回遊戲列表')
+        .replaceAll('href="../">← 回首頁</a>', 'href="../../">← 回遊戲列表</a>');
+      if (patched !== html) fs.writeFileSync(playIndex, patched, "utf8");
+    }
   }
 
   // Root index.html
