@@ -23,10 +23,10 @@
         <div class="panel">
           <div class="hud">
             <div class="hudLeft">
-              <div class="pill">分數 <b id="score">0</b></div>
+              <div class="pill">關卡分數 <b id="score">0</b></div>
               <div class="pill">總分 <b id="totalScore">0</b></div>
               <div class="pill">連擊 <b id="combo">0</b></div>
-              <div class="pill">炮彈 <b id="ammo">0</b></div>
+              <div class="pill">大絕 <b id="ammo">0</b></div>
               <div class="pill">關卡 <b id="level">1</b></div>
               <div class="pill">本關 <b id="stageProgress">0/0</b></div>
               <div class="pill">剩餘 <b id="timeLeft">03:00</b></div>
@@ -88,7 +88,7 @@
                 <button type="submit">送出（Enter）</button>
               </form>
               <div class="hint" id="hint">
-                建議使用中文輸入法；本遊戲以「送出（Enter）」作為命中判定時機。一次打一個字即可。
+                建議使用中文輸入法；本遊戲以「送出（Enter）」作為命中判定時機。一次打一個字即可。<b>按空白鍵可發射大絕</b>（需有大絕且輸入框為空）。
               </div>
             </div>
           </div>
@@ -127,6 +127,19 @@
                 </label>
               </div>
             </div>
+            <div class="row">
+              <label for="bgmEnabled">音樂</label>
+              <div style="display: flex; gap: 10px; align-items: center">
+                <label style="display: inline-flex; gap: 8px; align-items: center">
+                  <input id="bgmEnabled" type="checkbox" checked />
+                  <span>背景音樂</span>
+                </label>
+                <label style="display: inline-flex; gap: 8px; align-items: center">
+                  <span class="small">音量</span>
+                  <input id="bgmVolume" type="range" min="0" max="100" value="25" />
+                </label>
+              </div>
+            </div>
             <div class="small">
               小提醒：這是「打出中文字符」的練習，所以會依賴你的中文輸入法。為了避免 IME
               組字階段干擾，本遊戲以「送出（Enter）」作為命中判定時機；也因此較適合練「準確」與「節奏」。
@@ -136,19 +149,14 @@
           <h3 class="sectionTitle">規則</h3>
           <div class="box small">
             - 命中：輸入文字與其中一個落字<strong>完全相同</strong> → 得分、連擊 +1<br />
-            - 出錯：送出後<strong>沒有命中任何字</strong> → 連擊歸零（並可能扣分）<br />
+            - 出錯：送出後<strong>沒有命中任何字</strong> → 連擊歸零（不扣分）<br />
             - 漏字：落字碰到底線 → <strong>扣分</strong>、連擊歸零<br />
             - 過關：<strong>3 分鐘內</strong>達到本關目標分數 → 進入下一關（難度循序漸進）
           </div>
 
-          <h3 class="sectionTitle">武器字</h3>
+          <h3 class="sectionTitle">大絕</h3>
           <div class="box small">
-            偶爾會掉落武器字（例如「爆」「箭」）：命中後會引爆或射擊，順便清掉其他字並有特效。
-          </div>
-
-          <h3 class="sectionTitle">炮彈</h3>
-          <div class="box small">
-            每<strong>成功命中 10 次</strong>會獲得 1 枚炮彈。當你有炮彈時，<strong>用滑鼠點擊任一落字</strong>會發射飛彈把它炸掉（增加趣味，且能降低漏字扣分風險）。
+            每<strong>成功命中 10 次</strong>會獲得 1 次<strong>大絕</strong>。當你有大絕時，按<strong>空白鍵</strong>會發射大絕，必定擊碎「目前最低」的文字方塊（降低漏字扣分風險）。
           </div>
 
           <h3 class="sectionTitle">最高紀錄</h3>
@@ -162,6 +170,7 @@
           <h3 class="sectionTitle">快捷鍵</h3>
           <div class="box small">
             - <b>Enter</b>：送出命中（輸入框內）<br />
+            - <b>Space</b>：發射大絕（輸入框空白且未組字時）<br />
             - <b>Esc</b>：暫停/繼續<br />
             - <b>Ctrl/Cmd + K</b>：清空輸入框
           </div>

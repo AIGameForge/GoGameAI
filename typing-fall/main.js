@@ -32,9 +32,8 @@
   const elBestTimes = $("bestTimes");
   const elSfxEnabled = $("sfxEnabled");
   const elSfxVolume = $("sfxVolume");
-
-  const WEAPON_BOMB_CHAR = "爆";
-  const WEAPON_ARROW_CHAR = "箭";
+  const elBgmEnabled = $("bgmEnabled");
+  const elBgmVolume = $("bgmVolume");
 
   const ZY_INITIALS = Array.from("ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙ");
   const ZY_FINALS = Array.from("ㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦㄧㄨㄩ");
@@ -85,12 +84,53 @@
     let master = null;
     let enabled = true;
     let volume = 0.4;
+    let assetsReady = false;
+    /** @type {{ hit: { list: HTMLAudioElement[], i: number } | null, dead: { list: HTMLAudioElement[], i: number } | null, laser: { list: HTMLAudioElement[], i: number } | null }} */
+    const pools = { hit: null, dead: null, laser: null };
 
     function clamp01(v) {
       return Math.max(0, Math.min(1, v));
     }
 
+    function makePool(src, size = 4) {
+      const list = [];
+      for (let i = 0; i < size; i += 1) {
+        const a = new Audio(src);
+        a.preload = "auto";
+        a.volume = volume;
+        list.push(a);
+      }
+      return { list, i: 0 };
+    }
+
+    function ensureAssets() {
+      if (!enabled) return;
+      if (assetsReady) return;
+      assetsReady = true;
+      pools.hit = makePool("./hit.wav", 5);
+      pools.dead = makePool("./dead.wav", 4);
+      pools.laser = makePool("./laser.wav", 3);
+    }
+
+    function playPool(pool) {
+      if (!enabled) return false;
+      ensureAssets();
+      if (!pool || !pool.list || pool.list.length === 0) return false;
+      const a = pool.list[pool.i % pool.list.length];
+      pool.i += 1;
+      a.volume = volume;
+      try {
+        a.currentTime = 0;
+        const p = a.play();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      } catch {
+        // ignore
+      }
+      return true;
+    }
+
     function ensure() {
+      ensureAssets();
       if (!enabled) return null;
       if (ctx) return ctx;
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -109,6 +149,11 @@
     function setVolume01(v) {
       volume = clamp01(v);
       if (master) master.gain.value = volume;
+      for (const key of /** @type {const} */ (["hit", "dead", "laser"])) {
+        const pool = pools[key];
+        if (!pool) continue;
+        for (const a of pool.list) a.volume = volume;
+      }
     }
 
     function nowT() {
@@ -189,6 +234,7 @@
     }
 
     function hit(pts) {
+      if (playPool(pools.hit)) return;
       if (pts === 5) {
         tone({ type: "triangle", freq: 880, dur: 0.08, gain: 0.13 });
         tone({ type: "sine", freq: 1320, dur: 0.06, gain: 0.07, detune: 6 });
@@ -204,6 +250,13 @@
       if (pts === 5) sweep({ f0: 280, f1: 1200, dur: 0.12, gain: 0.10, type: "sawtooth" });
       else if (pts === 3) sweep({ f0: 220, f1: 900, dur: 0.14, gain: 0.09, type: "sawtooth" });
       else sweep({ f0: 180, f1: 700, dur: 0.16, gain: 0.08, type: "sawtooth" });
+    }
+
+    function laser() {
+      if (playPool(pools.laser)) return;
+      // electric zap: bright sweep + short noise crackle
+      sweep({ f0: 520, f1: 1900, dur: 0.18, gain: 0.09, type: "triangle" });
+      noise({ dur: 0.10, gain: 0.06, tone: 1200 });
     }
 
     function boom(pts) {
@@ -225,6 +278,7 @@
     }
 
     function drop() {
+      if (playPool(pools.dead)) return;
       tone({ type: "sine", freq: 120, dur: 0.10, gain: 0.11 });
       noise({ dur: 0.06, gain: 0.07, tone: 260 });
     }
@@ -250,6 +304,7 @@
       setVolume01,
       hit,
       missile,
+      laser,
       boom,
       wrong,
       drop,
@@ -257,6 +312,55 @@
       ammoUp,
       ensure,
     };
+  })();
+
+  const bgm = (() => {
+    /** @type {HTMLAudioElement | null} */
+    let audio = null;
+    let enabled = true;
+    let volume = 0.25;
+
+    function ensure() {
+      if (audio) return audio;
+      audio = new Audio("./pixel_loop.wav");
+      audio.loop = true;
+      audio.preload = "auto";
+      audio.volume = volume;
+      return audio;
+    }
+
+    function setEnabled(v) {
+      enabled = !!v;
+      if (!enabled && audio) audio.pause();
+    }
+
+    function setVolume01(v) {
+      volume = Math.max(0, Math.min(1, v));
+      if (audio) audio.volume = volume;
+    }
+
+    async function play() {
+      if (!enabled) return;
+      const a = ensure();
+      a.volume = volume;
+      try {
+        await a.play();
+      } catch {
+        // autoplay restrictions; ignore
+      }
+    }
+
+    function pause() {
+      if (audio) audio.pause();
+    }
+
+    function stop() {
+      if (!audio) return;
+      audio.pause();
+      audio.currentTime = 0;
+    }
+
+    return { ensure, setEnabled, setVolume01, play, pause, stop };
   })();
 
   function now() {
@@ -297,8 +401,10 @@
 
   function stageTargetScoreFor(level) {
     // 3 分鐘內達標：分數尺度改成 5/3/1（依高度）後，目標要跟著變得更貼近人性
-    if (level <= 5) return 60 + (level - 1) * 20; // 60, 80, 100, 120, 140
-    return 140 + (level - 5) * 25; // 165, 190, 215...
+    // 提高每關成長幅度，讓過關後更有「難度上升」的感覺
+    if (level <= 2) return 60 + (level - 1) * 25; // 60, 85
+    if (level <= 5) return 110 + (level - 3) * 30; // 110, 140, 170
+    return 200 + (level - 6) * 40; // 200, 240, 280...
   }
 
   function tierPointsByHeight(wordCenterY, playfieldHeight) {
@@ -310,28 +416,24 @@
     return { pts: 1, tier: "低" };
   }
 
-  function weaponChanceFor(level) {
-    // 武器字不要太常見：前期少一點，後面稍增加
-    return Math.min(0.12, 0.05 + Math.max(0, level - 3) * 0.01);
-  }
-
   function maxOnScreenFor(level) {
     // 循序漸進：前期同屏字數少，之後慢慢增加
-    if (level <= 2) return 5;
-    if (level <= 4) return 6;
-    if (level <= 7) return 7;
-    return 8;
+    if (level <= 1) return 5;
+    if (level <= 3) return 6;
+    if (level <= 5) return 7;
+    if (level <= 7) return 8;
+    return 9;
   }
 
   function difficultyParams() {
     const d = difficultySel.value;
     if (d === "easy") {
-      return { spawnMs: 1750, baseSpeed: 22, wrongPenalty: 1, dropPenalty: 2 };
+      return { spawnMs: 1750, baseSpeed: 22, wrongPenalty: 0, dropPenalty: 2 };
     }
     if (d === "hard") {
-      return { spawnMs: 1500, baseSpeed: 26, wrongPenalty: 1, dropPenalty: 2 };
+      return { spawnMs: 1500, baseSpeed: 26, wrongPenalty: 0, dropPenalty: 2 };
     }
-    return { spawnMs: 1620, baseSpeed: 24, wrongPenalty: 1, dropPenalty: 2 };
+    return { spawnMs: 1620, baseSpeed: 24, wrongPenalty: 0, dropPenalty: 2 };
   }
 
   function stageTargetFor(level) {
@@ -341,14 +443,18 @@
 
   function speedMultiplierFor(level) {
     // 前 5 關很溫和；第 6 關後才開始更明顯
-    if (level <= 5) return 1 + (level - 1) * 0.02;
-    return 1 + 4 * 0.02 + (level - 5) * 0.04;
+    // 讓「過關後變快」更有感，但前兩關仍保留緩衝
+    if (level <= 2) return 1 + (level - 1) * 0.03;
+    if (level <= 5) return 1 + 1 * 0.03 + (level - 2) * 0.05;
+    return 1 + 1 * 0.03 + 3 * 0.05 + (level - 5) * 0.07;
   }
 
   function spawnMultiplierFor(level) {
-    // 掉落密度：前 5 關幾乎不壓迫，之後才慢慢變密
-    if (level <= 5) return 1 + (level - 1) * 0.06; // 數值越大 => 間隔越久 => 更慢
-    return 1 + 4 * 0.06 + (level - 5) * 0.02;
+    // 掉落密度：數值越大 => 間隔越久（更慢）；這裡讓關卡越高越「更密」
+    // 前兩關溫和，之後加速變密
+    if (level <= 2) return 1.15 - (level - 1) * 0.06; // 1.15, 1.09
+    if (level <= 5) return 1.03 - (level - 2) * 0.06; // 1.03, 0.97, 0.91
+    return 0.85 - (level - 5) * 0.04; // 0.85, 0.81, 0.77...
   }
 
   function fmtTime(ms) {
@@ -456,121 +562,16 @@
     flash._t = window.setTimeout(() => flash.classList.remove("show"), 160);
   }
 
-  function popParticles(clientX, clientY, kind) {
-    const pf = playfield.getBoundingClientRect();
-    const x = clientX - pf.left;
-    const y = clientY - pf.top;
-
-    const color =
-      kind === "good"
-        ? "rgba(34, 197, 94, 0.95)"
-        : kind === "bad"
-          ? "rgba(239, 68, 68, 0.95)"
-          : "rgba(96, 165, 250, 0.95)";
-
-    for (let i = 0; i < 10; i++) {
-      const p = document.createElement("div");
-      p.className = "particle";
-      p.style.left = `${x}px`;
-      p.style.top = `${y}px`;
-      p.style.background = color;
-
-      const a = Math.random() * Math.PI * 2;
-      const r = 22 + Math.random() * 38;
-      const dx = Math.cos(a) * r;
-      const dy = Math.sin(a) * r - 8;
-      p.style.setProperty("--dx", `${dx}px`);
-      p.style.setProperty("--dy", `${dy}px`);
-
-      playfield.appendChild(p);
-      p.addEventListener("animationend", () => p.remove(), { once: true });
-    }
-  }
-
-  function burstParticles(clientX, clientY, kind, count) {
-    const pf = playfield.getBoundingClientRect();
-    const x = clientX - pf.left;
-    const y = clientY - pf.top;
-
-    const color =
-      kind === "good"
-        ? "rgba(34, 197, 94, 0.95)"
-        : kind === "bad"
-          ? "rgba(239, 68, 68, 0.95)"
-          : "rgba(96, 165, 250, 0.95)";
-
-    const n = Math.max(1, count | 0);
-    for (let i = 0; i < n; i++) {
-      const p = document.createElement("div");
-      p.className = "particle";
-      p.style.left = `${x}px`;
-      p.style.top = `${y}px`;
-      p.style.background = color;
-
-      const a = Math.random() * Math.PI * 2;
-      const r = 18 + Math.random() * 54;
-      const dx = Math.cos(a) * r;
-      const dy = Math.sin(a) * r - 10;
-      p.style.setProperty("--dx", `${dx}px`);
-      p.style.setProperty("--dy", `${dy}px`);
-
-      playfield.appendChild(p);
-      p.addEventListener("animationend", () => p.remove(), { once: true });
-    }
-  }
-
-  function blastAt(clientX, clientY, pts) {
-    // 依分數套不同爆炸：1(小) / 3(中) / 5(大)
-    const cls = pts === 5 ? "t5" : pts === 3 ? "t3" : "t1";
-    const kind = pts === 5 ? "good" : pts === 3 ? "info" : "bad";
-    const bursts = pts === 5 ? 3 : pts === 3 ? 2 : 1;
-    const particlesPerBurst = pts === 5 ? 26 : pts === 3 ? 18 : 12;
-
-    // ring
-    const pf = playfield.getBoundingClientRect();
-    const x = clientX - pf.left;
-    const y = clientY - pf.top;
-    const ring = document.createElement("div");
-    ring.className = `blastRing ${cls}`;
-    ring.style.left = `${x}px`;
-    ring.style.top = `${y}px`;
-    playfield.appendChild(ring);
-    ring.addEventListener("animationend", () => ring.remove(), { once: true });
-
-    for (let b = 0; b < bursts; b++) {
-      window.setTimeout(() => {
-        burstParticles(
-          clientX + (Math.random() * 12 - 6),
-          clientY + (Math.random() * 10 - 5),
-          kind,
-          particlesPerBurst
-        );
-      }, b * (pts === 5 ? 70 : 85));
-    }
-  }
+  // （已移除：命中爆炸/粒子等特效，改成純打字）
 
   function celebratePerfectStage() {
-    // 簡易煙火：多個 burst 疊加，搭配浮字
+    // 純打字模式：只顯示文字即可
     const pf = playfield.getBoundingClientRect();
     const cx = pf.left + pf.width / 2;
     const cy = pf.top + pf.height * 0.28;
-
     const words = ["Good!", "Awesome!", "Perfect!", "Nice!"];
     const msg = words[(Math.random() * words.length) | 0];
     popFloatText(cx, cy, msg, "good");
-
-    // 連續幾次爆點
-    const bursts = 7;
-    for (let i = 0; i < bursts; i++) {
-      const delay = i * 120;
-      window.setTimeout(() => {
-        const x = pf.left + pf.width * (0.18 + Math.random() * 0.64);
-        const y = pf.top + pf.height * (0.12 + Math.random() * 0.48);
-        const kind = i % 2 === 0 ? "good" : "info";
-        popParticles(x, y, kind);
-        popParticles(x + (Math.random() * 30 - 15), y + (Math.random() * 20 - 10), kind);
-      }, delay);
-    }
   }
 
   function popFloatText(clientX, clientY, text, kind = "info") {
@@ -624,6 +625,7 @@
     state.lastHudSecond = null;
     updateHud();
     setStatus("準備開始");
+    bgm.stop();
 
     input.value = "";
     highlightMatches("");
@@ -640,21 +642,12 @@
 
   function spawnWord() {
     const rect = playfield.getBoundingClientRect();
-    const isWeapon = Math.random() < weaponChanceFor(state.level);
-    const weaponType = isWeapon ? (Math.random() < 0.55 ? "bomb" : "arrow") : undefined;
     const set = wordsetSel.value;
-    const zy = !isWeapon && set === "zhuyin" ? pickZhuyin() : null;
-    const text = isWeapon
-      ? weaponType === "bomb"
-        ? WEAPON_BOMB_CHAR
-        : WEAPON_ARROW_CHAR
-      : zy
-        ? zy.text
-        : pickChar();
+    const zy = set === "zhuyin" ? pickZhuyin() : null;
+    const text = zy ? zy.text : pickChar();
     const w = {
       id: state.nextId++,
-      kind: isWeapon ? "weapon" : "normal",
-      weaponType,
+      kind: "normal",
       text,
       zyLen: zy ? zy.len : undefined,
       x: Math.random() * rect.width,
@@ -670,10 +663,6 @@
 
     w.el.className = "word";
     w.el.textContent = w.text;
-    if (w.kind === "weapon") {
-      w.el.classList.add("weapon");
-      w.el.classList.add(w.weaponType);
-    }
     if (w.zyLen) w.el.classList.add(`zy${w.zyLen}`);
     w.el.style.left = `${clamp(w.x, 28, rect.width - 28)}px`;
     w.el.style.top = `${w.y}px`;
@@ -705,9 +694,10 @@
     state.gameOver = true;
     updateHud();
     setStatus("遊戲結束");
+    bgm.pause();
     showOverlay(
       "遊戲結束",
-      `${reason}。本關分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
+      `${reason}。關卡分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
     );
     setOverlayPrimary("開始遊戲");
   }
@@ -718,9 +708,10 @@
     state.gameOver = true;
     updateHud();
     setStatus("時間到");
+    bgm.pause();
     showOverlay(
       "時間到",
-      `未達標：本關分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
+      `未達標：關卡分數 ${state.score}/${state.stageTargetScore}，總分 ${state.totalScore}。按「重來」再挑戰一次。`
     );
     setOverlayPrimary("開始遊戲");
   }
@@ -782,6 +773,7 @@
     state.lastSpawnT = now();
     setStatus(`進行中（第 ${state.level} 關）`);
     input.focus();
+    bgm.play();
   }
 
   function removeWord(w) {
@@ -789,40 +781,7 @@
     state.words = state.words.filter((x) => x.id !== w.id);
   }
 
-  function weaponBombAt(cx, cy) {
-    // 清除附近幾個字
-    const radius = 170;
-    const killed = [];
-    for (const w of state.words) {
-      const dx = w.x - cx;
-      const dy = w.y - cy;
-      const d = Math.hypot(dx, dy);
-      if (d <= radius) killed.push({ w, d });
-    }
-    killed.sort((a, b) => a.d - b.d);
-    const take = killed.slice(0, 7).map((k) => k.w);
-    for (const w of take) {
-      const r = w.el.getBoundingClientRect();
-      popParticles(r.left + r.width / 2, r.top + r.height / 2, "info");
-      removeWord(w);
-    }
-    return take.length;
-  }
-
-  function weaponArrowFrom(cx) {
-    // 射擊：清掉同一條垂直帶上的字
-    const band = 64;
-    const killed = state.words
-      .filter((w) => Math.abs(w.x - cx) < band)
-      .sort((a, b) => b.y - a.y)
-      .slice(0, 6);
-    for (const w of killed) {
-      const r = w.el.getBoundingClientRect();
-      popParticles(r.left + r.width / 2, r.top + r.height / 2, "good");
-      removeWord(w);
-    }
-    return killed.length;
-  }
+  // （已移除：武器字邏輯，改成純打字）
 
   function applyDangerStyles() {
     const rect = playfield.getBoundingClientRect();
@@ -861,9 +820,6 @@
     if (!best) return { ok: false, msg: "沒有命中" };
 
     const hitRect = best.el.getBoundingClientRect();
-    // 用導彈命中特效取代「瞬間消失」
-    best.pending = true;
-    best.el.classList.add("pending");
 
     // score (依命中高度分三段)
     state.hits += 1;
@@ -881,21 +837,9 @@
     setStatus(`命中（${tier}）+${pts}`);
     popFloatText(hitRect.left + hitRect.width / 2, hitRect.top, `+${pts}`, "good");
 
-    // 導彈飛過去命中（依 5/3/1 用不同導彈/爆炸）
-    launchMissileToPoint(
-      hitRect.left + hitRect.width / 2,
-      hitRect.top + hitRect.height / 2,
-      pts,
-      () => {
-      blastAt(hitRect.left + hitRect.width / 2, hitRect.top + hitRect.height / 2, pts);
-      sfx.boom(pts);
-      const still = state.words.find((w) => w.id === best.id);
-      if (still) {
-        removeWord(still);
-        highlightMatches(input.value.trim());
-      }
-      }
-    );
+    // 純打字：命中即移除
+    removeWord(best);
+    highlightMatches(input.value.trim());
 
     // 武器字效果
     if (best.kind === "weapon") {
@@ -918,12 +862,12 @@
 
     // 移除任何看似「額外加分」的提示，避免混淆（保留 combo 數字即可）
 
-    // 每命中 10 次 -> +1 炮彈
+    // 每命中 10 次 -> +1 大絕
     if (state.hitsSinceAmmo % 10 === 0) {
       state.ammo += 1;
       updateHud();
       sfx.ammoUp();
-      popFloatText(hitRect.left + hitRect.width / 2, hitRect.top - 20, "炮彈 +1", "info");
+      popFloatText(hitRect.left + hitRect.width / 2, hitRect.top - 20, "大絕 +1", "info");
     }
 
     if (state.score >= state.stageTargetScore) {
@@ -960,7 +904,7 @@
 
     // spawn pacing
     const params = difficultyParams();
-    const spawnEvery = params.spawnMs * clamp(spawnMultiplierFor(state.level), 1.0, 1.9);
+    const spawnEvery = params.spawnMs * clamp(spawnMultiplierFor(state.level), 0.55, 1.6);
     if (t - state.lastSpawnT > spawnEvery && state.words.length < maxOnScreenFor(state.level)) {
       state.lastSpawnT = t;
       spawnWord();
@@ -1000,6 +944,7 @@
     state.lastSpawnT = now();
     setStatus(`進行中（第 ${state.level} 關）`);
     input.focus();
+    bgm.play();
   }
 
   function togglePause() {
@@ -1010,11 +955,13 @@
       setStatus("已暫停");
       showOverlay("已暫停", "按「暫停」或 Esc 可繼續。");
       setOverlayPrimary("繼續");
+      bgm.pause();
     } else {
       hideOverlay();
       setStatus("進行中");
       state.lastT = now();
       input.focus();
+      bgm.play();
     }
   }
 
@@ -1041,14 +988,11 @@
     } else {
       // 出錯定義：送出後沒命中任何字 -> 重置連擊/連段 + 視覺回饋
       const hadStreak = state.submitStreak;
-      const params = difficultyParams();
       state.stageMistakes += 1;
       state.combo = 0;
       state.submitStreak = 0;
-      state.score = Math.max(0, state.score - params.wrongPenalty);
-      state.totalScore = Math.max(0, state.totalScore - params.wrongPenalty);
       updateHud();
-      setStatus(`${r.msg} -${params.wrongPenalty}`);
+      setStatus(r.msg);
 
       const inRect = input.getBoundingClientRect();
       popFloatText(inRect.left + inRect.width * 0.5, inRect.top - 10, "未命中", "bad");
@@ -1102,131 +1046,189 @@
     input.focus();
   });
 
-  function launchMissileToWord(word) {
+  function zapWordWithLaser(word) {
     const pf = playfield.getBoundingClientRect();
     const target = word.el.getBoundingClientRect();
     const tx = target.left + target.width / 2 - pf.left;
     const ty = target.top + target.height / 2 - pf.top;
-    const sx = pf.width / 2;
-    const sy = pf.height + 24;
+    const sx = pf.width * 0.5;
+    const sy = pf.height + 18;
 
-    const m = document.createElement("div");
-    m.className = "missile";
-    playfield.appendChild(m);
-
-    const anim = m.animate(
-      [
-        { transform: `translate(${sx}px, ${sy}px)`, opacity: 0.0 },
-        { transform: `translate(${sx}px, ${sy}px)`, opacity: 1.0, offset: 0.08 },
-        { transform: `translate(${tx}px, ${ty}px)`, opacity: 1.0 },
-      ],
-      { duration: 360, easing: "cubic-bezier(0.2, 0.9, 0.2, 1)", fill: "forwards" }
-    );
-
-    anim.addEventListener(
-      "finish",
-      () => {
-        m.remove();
-        const still = state.words.find((w) => w.id === word.id);
-        popParticles(target.left + target.width / 2, target.top + target.height / 2, "bad");
-        popParticles(target.left + target.width / 2, target.top + target.height / 2, "info");
-        popFloatText(target.left + target.width / 2, target.top - 6, "砲擊！", "info");
-        if (still) {
-          removeWord(still);
-          highlightMatches(input.value.trim());
-        }
-      },
-      { once: true }
-    );
-  }
-
-  function launchMissileToPoint(clientX, clientY, pts, onHit) {
-    const pf = playfield.getBoundingClientRect();
-    const tx = clientX - pf.left;
-    const ty = clientY - pf.top;
-    const sx = pf.width / 2;
-    const sy = pf.height + 24;
-
-    const m = document.createElement("div");
-    const cls = pts === 5 ? "t5" : pts === 3 ? "t3" : "t1";
-    m.className = `missile ${cls}`;
-    playfield.appendChild(m);
-
-    const duration = pts === 5 ? 260 : pts === 3 ? 310 : 360;
-    sfx.missile(pts);
     const angle = Math.atan2(ty - sy, tx - sx);
     const rot = `${(angle * 180) / Math.PI}deg`;
+    const dist = Math.hypot(tx - sx, ty - sy);
 
-    const easeOut = (p) => 1 - Math.pow(1 - p, 3);
-    const startedAt = performance.now();
-    let raf = 0;
-    let lastTrailAt = 0;
+    // laser beam (slower, stays on target)
+    const beam = document.createElement("div");
+    beam.className = "laserBeam";
+    beam.innerHTML = `<i class="laserNoise"></i><i class="laserArc"></i>`;
+    beam.style.width = `${dist}px`;
+    beam.style.transform = `translate(${sx}px, ${sy}px) rotate(${rot}) translate(0, -50%) scaleX(0)`;
+    playfield.appendChild(beam);
 
-    const tickTrail = (t) => {
-      const p = Math.max(0, Math.min(1, (t - startedAt) / duration));
-      const e = easeOut(p);
-      const x = sx + (tx - sx) * e;
-      const y = sy + (ty - sy) * e;
+    // freeze target
+    word.pending = true;
+    word.el.classList.add("pending", "zapped");
 
-      if (t - lastTrailAt > 30) {
-        lastTrailAt = t;
-        const dot = document.createElement("div");
-        dot.className = `trailDot ${cls}`;
-        dot.style.left = `${x}px`;
-        dot.style.top = `${y}px`;
-        playfield.appendChild(dot);
-        dot.addEventListener("animationend", () => dot.remove(), { once: true });
-      }
-
-      if (p < 1) raf = requestAnimationFrame(tickTrail);
-    };
-    raf = requestAnimationFrame(tickTrail);
-
-    const anim = m.animate(
+    const duration = 760;
+    const anim = beam.animate(
       [
-        { transform: `translate(${sx}px, ${sy}px) rotate(${rot})`, opacity: 0.0 },
-        { transform: `translate(${sx}px, ${sy}px) rotate(${rot})`, opacity: 1.0, offset: 0.08 },
-        { transform: `translate(${tx}px, ${ty}px) rotate(${rot})`, opacity: 1.0 },
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot}) translate(0, -50%) scaleX(0)`, opacity: 0.0 },
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot}) translate(0, -50%) scaleX(1)`, opacity: 1.0, offset: 0.22 },
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot}) translate(0, -50%) scaleX(1)`, opacity: 0.85, offset: 0.78 },
+        { transform: `translate(${sx}px, ${sy}px) rotate(${rot}) translate(0, -50%) scaleX(1)`, opacity: 0.0 },
       ],
-      { duration, easing: "cubic-bezier(0.2, 0.9, 0.2, 1)", fill: "forwards" }
+      { duration, easing: "ease-out", fill: "forwards" }
     );
+
+    const spawnSparks = () => {
+      const n = 14;
+      for (let i = 0; i < n; i += 1) {
+        const sp = document.createElement("div");
+        sp.className = "laserSpark";
+        sp.style.left = `${tx}px`;
+        sp.style.top = `${ty}px`;
+        const a = Math.random() * Math.PI * 2;
+        const dist = 36 + Math.random() * 44;
+        const dx = Math.cos(a) * dist;
+        const dy = Math.sin(a) * dist;
+        sp.style.setProperty("--dx", `${dx.toFixed(1)}px`);
+        sp.style.setProperty("--dy", `${dy.toFixed(1)}px`);
+        sp.style.setProperty("--rot", `${(a * 180) / Math.PI}deg`);
+        playfield.appendChild(sp);
+        sp.addEventListener("animationend", () => sp.remove(), { once: true });
+      }
+    };
+
+    const spawnShards = () => {
+      const n = 10;
+      for (let i = 0; i < n; i += 1) {
+        const sh = document.createElement("div");
+        sh.className = "laserShard";
+        sh.style.left = `${tx}px`;
+        sh.style.top = `${ty}px`;
+        const a = Math.random() * Math.PI * 2;
+        const dist = 42 + Math.random() * 62;
+        const dx = Math.cos(a) * dist;
+        const dy = Math.sin(a) * dist;
+        sh.style.setProperty("--dx", `${dx.toFixed(1)}px`);
+        sh.style.setProperty("--dy", `${dy.toFixed(1)}px`);
+        sh.style.setProperty("--rot", `${(Math.random() * 360).toFixed(0)}deg`);
+        sh.style.setProperty("--rot2", `${(Math.random() * 720 - 360).toFixed(0)}deg`);
+        playfield.appendChild(sh);
+        sh.addEventListener("animationend", () => sh.remove(), { once: true });
+      }
+    };
+
+    const spawnAsh = () => {
+      const n = 8;
+      for (let i = 0; i < n; i += 1) {
+        const puff = document.createElement("div");
+        puff.className = "ashPuff";
+        puff.style.left = `${tx}px`;
+        puff.style.top = `${ty}px`;
+        const dx = (Math.random() * 2 - 1) * 48;
+        const dy = -Math.random() * 64;
+        puff.style.setProperty("--dx", `${dx.toFixed(1)}px`);
+        puff.style.setProperty("--dy", `${dy.toFixed(1)}px`);
+        playfield.appendChild(puff);
+        puff.addEventListener("animationend", () => puff.remove(), { once: true });
+      }
+    };
 
     anim.addEventListener(
       "finish",
       () => {
-        if (raf) cancelAnimationFrame(raf);
-        m.remove();
-        if (typeof onHit === "function") onHit();
+        beam.remove();
+        const still = state.words.find((w) => w.id === word.id);
+        if (!still) return;
+
+        // impact explosion (distinct from normal remove)
+        playfield.classList.remove("shake");
+        // reflow to restart animation reliably
+        void playfield.offsetWidth;
+        playfield.classList.add("shake");
+
+        const flash = document.createElement("div");
+        flash.className = "laserFlash";
+        flash.style.left = `${tx}px`;
+        flash.style.top = `${ty}px`;
+        playfield.appendChild(flash);
+        flash.addEventListener("animationend", () => flash.remove(), { once: true });
+
+        const impact = document.createElement("div");
+        impact.className = "laserImpact";
+        impact.style.left = `${tx}px`;
+        impact.style.top = `${ty}px`;
+        playfield.appendChild(impact);
+        impact.addEventListener("animationend", () => impact.remove(), { once: true });
+
+        const sw1 = document.createElement("div");
+        sw1.className = "laserShockwave";
+        sw1.style.left = `${tx}px`;
+        sw1.style.top = `${ty}px`;
+        playfield.appendChild(sw1);
+        sw1.addEventListener("animationend", () => sw1.remove(), { once: true });
+
+        const sw2 = document.createElement("div");
+        sw2.className = "laserShockwave";
+        sw2.style.left = `${tx}px`;
+        sw2.style.top = `${ty}px`;
+        sw2.style.animationDelay = "70ms";
+        playfield.appendChild(sw2);
+        sw2.addEventListener("animationend", () => sw2.remove(), { once: true });
+
+        spawnSparks();
+        spawnShards();
+        spawnAsh();
+        still.el.classList.add("laserBoom");
+        // 不顯示任何技能文字（避免干擾打字）
+
+        still.el.addEventListener(
+          "animationend",
+          () => {
+            const alive = state.words.find((w) => w.id === word.id);
+            if (alive) {
+              removeWord(alive);
+              highlightMatches(input.value.trim());
+            }
+          },
+          { once: true }
+        );
       },
       { once: true }
     );
   }
 
-  // 點擊落字：消耗炮彈直接炸掉
-  playfield.addEventListener("pointerdown", (e) => {
-    const targetEl = e.target && e.target.closest ? e.target.closest(".word") : null;
-    if (!targetEl) return;
+  // 大絕：空白鍵發射，永遠擊碎最低的文字方塊
+  let isComposing = false;
+  input.addEventListener("compositionstart", () => {
+    isComposing = true;
+  });
+  input.addEventListener("compositionend", () => {
+    isComposing = false;
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.code !== "Space") return;
     if (elOverlay.style.display !== "none") return;
     if (!state.running || state.paused) return;
+    if (isComposing) return; // 避免干擾 IME 選字
+    if (document.activeElement === input && input.value.trim() !== "") return; // 有內容就讓使用者正常打字
+
+    if (state.ammo <= 0) return;
+    // 找最低的字（y 最大）
+    const candidates = state.words.filter((w) => !w.pending);
+    if (candidates.length === 0) return;
+    let lowest = candidates[0];
+    for (const w of candidates) if (w.y > lowest.y) lowest = w;
+
     e.preventDefault();
-
-    const word = state.words.find((w) => w.el === targetEl);
-    if (!word) return;
-
-    const clientX = e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX) || 0;
-    const clientY = e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY) || 0;
-
-    if (state.ammo <= 0) {
-      popFloatText(clientX, clientY, "沒有炮彈", "bad");
-      flashBad();
-      return;
-    }
-
     state.ammo -= 1;
     updateHud();
-    popFloatText(clientX, clientY, "炮彈 -1", "info");
-    sfx.missile(3);
-    launchMissileToWord(word);
+    popFloatText(input.getBoundingClientRect().left + 80, input.getBoundingClientRect().top - 10, "大絕 -1", "info");
+    sfx.laser();
+    zapWordWithLaser(lowest);
   });
 
   // 音效設定
@@ -1240,11 +1242,23 @@
   if (elSfxVolume) elSfxVolume.addEventListener("input", syncSfxSettings);
   syncSfxSettings();
 
+  // 背景音樂設定
+  function syncBgmSettings() {
+    const on = elBgmEnabled ? elBgmEnabled.checked : true;
+    const vol = elBgmVolume ? Number(elBgmVolume.value || 0) / 100 : 0.25;
+    bgm.setEnabled(on);
+    bgm.setVolume01(vol);
+  }
+  if (elBgmEnabled) elBgmEnabled.addEventListener("change", syncBgmSettings);
+  if (elBgmVolume) elBgmVolume.addEventListener("input", syncBgmSettings);
+  syncBgmSettings();
+
   // 只要有互動就嘗試啟動音訊（避免自動播放限制）
   window.addEventListener(
     "pointerdown",
     () => {
       sfx.ensure();
+      bgm.ensure();
     },
     { once: true }
   );
